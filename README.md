@@ -1,3 +1,3 @@
 # ESP-One
-* Features
-Tempature read
+Features
+* Tempature read
