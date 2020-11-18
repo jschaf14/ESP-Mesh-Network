@@ -15,7 +15,8 @@
 // Structure example to receive data
 // Must match the sender structure
 typedef struct struct_transmit_packet {
-    bool heatOnFlag;
+  int temp;
+  bool heatOnFlag;
 } struct_transmit_packet;
 
 struct_transmit_packet myData;
@@ -24,8 +25,9 @@ struct_transmit_packet myData;
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   memcpy(&myData, incomingData, sizeof(myData));
   Serial.println("recieved");
-  Serial.println(myData.heatOnFlag);
-  digitalWrite(2, myData.heatOnFlag);
+  Serial.println(myData.temp);
+  if (myData.heatOnFlag) digitalWrite(2, LOW);
+  else digitalWrite(2, HIGH);
 }
  
 void setup() {
