@@ -1,7 +1,9 @@
 #include <esp_now.h>
 #include <WiFi.h>
 
-#define TEMP1_READ_PIN 2
+#define TEMP1_READ_PIN 32
+#define TEMP2_READ_PIN 33
+#define TEMP3_READ_PIN 34
 #define MS_TO_SEC 1000
 #define ONE_SECOND (1 * MS_TO_SEC)
 #define FIVE_SECONDS (5 * MS_TO_SEC)
@@ -11,12 +13,18 @@
 #define PEER_ADDR_MEM_BYTES 6
 #define TRANSMIT_LED_PIN 12
 #define RESET 0
+#define C_TO_F 9 / 5 + 32
+#define TMP36_MODIFIER 6
+#define E_D_SETTLER 3
 
 const uint8_t ESP_Two_address[] = {0x24, 0x6F, 0x28, 0xB2, 0xD6, 0x84};
 
-static uint32_t tempVoltRead = RESET;
-static uint32_t tempInCelsius = RESET;
-static uint32_t swapper = RESET;
+static int tempVoltRead = RESET;
+static int tempInF = RESET;
+static int temp1InF = RESET;
+static int temp2InF = RESET;
+static int temp3InF = RESET;
+static uint8_t modifySettler = RESET;
 
 // Structure example to receive data
 // Must match the sender structure
@@ -28,8 +36,8 @@ struct_transmit_packet myData;
 
 enum ESP_One_st {temp_reading_st, transmit_st} ESP_One_current_st;
 
-static uint32_t volt_to_celsius(uint32_t x) {
-  return ((x - 500) / 10);
+static int volt_to_farenheit(int x) {
+  return ((x - 500) / 10) * C_TO_F - TMP36_MODIFIER;
 }
 
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
@@ -67,29 +75,38 @@ void setup() {
 void loop() {
   // put your main code here, to run repeatedly:
   tempVoltRead = analogRead(TEMP1_READ_PIN);
-  tempInCelsius = volt_to_celsius(tempVoltRead);
-  if (swapper >= 3) {
-    swapper = RESET;
-    myData.heatOnFlag = !myData.heatOnFlag;
-    esp_err_t result = esp_now_send(ESP_Two_address, (uint8_t *) &myData, sizeof(myData));
-    if (result == ESP_OK) {
-      Serial.println("Sent with success");
-    }
-    else {
-      Serial.println("Error sending the data");
-    }
-    Serial.print("Transmitting LOOP ");
-    Serial.println(myData.heatOnFlag);
-  }
-  swapper++;
+  temp1InF = volt_to_farenheit(tempVoltRead);
+  Serial.print("TEMP1: ");
+  Serial.println(temp1InF);
+
+  tempVoltRead = analogRead(TEMP2_READ_PIN);
+  temp2InF = volt_to_farenheit(tempVoltRead);
+  Serial.print("TEMP2: ");
+  Serial.println(temp2InF);
+
+  tempVoltRead = analogRead(TEMP3_READ_PIN);
+  temp3InF = volt_to_farenheit(tempVoltRead);
+  Serial.print("TEMP3: ");
+  Serial.println(temp3InF);
+
+  tempInF = (temp1InF + temp2InF + temp3InF) / 3;
+
+  Serial.print("TEMP: ");
+  Serial.println(tempInF);
   
   switch (ESP_One_current_st) {
   case temp_reading_st:
     // if below enable cutoff or above disable cutoff, move to transmit
-    if ((!myData.heatOnFlag && tempInCelsius <= HEAT_ENABLE_AT) || 
-          (myData.heatOnFlag && tempInCelsius >= HEAT_DISABLE_AT)) {
-      myData.heatOnFlag = (tempInCelsius <= HEAT_ENABLE_AT); //set flag to true or false based on tempature.
-      ESP_One_current_st = transmit_st; //change state to transmit
+    if ((!myData.heatOnFlag && tempInF <= HEAT_ENABLE_AT) || 
+          (myData.heatOnFlag && tempInF >= HEAT_DISABLE_AT)) {
+      modifySettler++;
+      if (modifySettler >= E_D_SETTLER) {
+        myData.heatOnFlag = (tempInF <= HEAT_ENABLE_AT); //set flag to true or false based on tempature.
+        ESP_One_current_st = transmit_st; //change state to transmit
+      }
+    }
+    else {
+      modifySettler = RESET;
     }
     break;
    case transmit_st:
@@ -99,5 +116,6 @@ void loop() {
     ESP_One_current_st = temp_reading_st;
     break;
   }
-  delay(ONE_SECOND);
+  
+  delay(FIVE_SECONDS);
 }
