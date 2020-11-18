@@ -5,7 +5,8 @@
 #define TEMP2_READ_PIN 33
 #define TEMP3_READ_PIN 34
 #define VOLT_READ_PIN 35
-#define TRANSMIT_LED_PIN 2
+#define BAD_VOLT_LED_PIN 15
+#define BAD_TEMP_LED_PIN 2
 #define VOLT_HIGH_BOUND 2275
 #define VOLT_LOW_BOUND 2245
 #define MS_TO_SEC 1000
@@ -21,15 +22,14 @@
 #define E_D_SETTLER 3
 #define NUM_SENSORS_READ
 
-const uint8_t ESP_Two_address[] = {0x24, 0x6F, 0x28, 0xB2, 0xD6, 0x84};
+const uint8_t ESPTwoAddress[] = {0x24, 0x6F, 0x28, 0xB2, 0xD6, 0x84};
 
-static int voltRead = RESET;
-static int tempVoltRead = RESET;
 static int tempInF = RESET;
 static int temp1InF = RESET;
 static int temp2InF = RESET;
 static int temp3InF = RESET;
 static int tempStack = RESET;
+static bool firstPass = true;
 static uint8_t tempNumRead = RESET;
 static uint8_t modifySettler = RESET;
 
@@ -42,7 +42,11 @@ typedef struct struct_transmit_packet {
 
 struct_transmit_packet myData;
 
-enum ESP_One_st {temp_reading_st, transmit_st, bad_volt_st} ESP_One_current_st;
+enum ESP_One_st {
+  temp_reading_st, 
+  transmit_st, 
+  bad_volt_st, 
+  bad_temp_st} ESP_One_current_st;
 
 static int volt_to_farenheit(int x) {
   return ((x - 500) / 10) * C_TO_F + TMP36_F_MODIFIER;
@@ -85,6 +89,26 @@ void tempRead() {
   }
   
   tempInF = tempStack / tempNumRead;
+  if (analogRead(VOLT_READ_PIN) > VOLT_HIGH_BOUND || analogRead(VOLT_READ_PIN) < VOLT_LOW_BOUND) {
+    Serial.println("out of volt bounds");
+    digitalWrite(BAD_VOLT_LED_PIN, LOW);
+    myData.heatOnFlag = false;
+    esp_now_send(ESPTwoAddress, (uint8_t *) &myData, sizeof(myData));
+    ESP_One_current_st = bad_volt_st;
+  }
+    
+  if (!firstPass && abs(myData.temp - tempInF) > 5) {
+    Serial.println("tempature variation too high");
+    Serial.print("Old: ");
+    Serial.print(myData.temp);
+    Serial.print(" New: ");
+    Serial.println(tempInF);
+    digitalWrite(BAD_TEMP_LED_PIN, LOW);
+    myData.heatOnFlag = false;
+    esp_now_send(ESPTwoAddress, (uint8_t *) &myData, sizeof(myData));
+    ESP_One_current_st = bad_temp_st;
+  } else firstPass = false;
+  
   myData.temp = tempInF;
   
   Serial.print("TEMP: ");
@@ -96,6 +120,9 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
   Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail");
 }
 
+/*
+ * Setup function
+ */
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(115200);
@@ -103,18 +130,12 @@ void setup() {
   pinMode(TEMP1_READ_PIN, INPUT);
   pinMode(TEMP2_READ_PIN, INPUT);
   pinMode(TEMP3_READ_PIN, INPUT);
-  pinMode(TRANSMIT_LED_PIN, OUTPUT);
-  digitalWrite(TRANSMIT_LED_PIN, HIGH);
+  pinMode(BAD_VOLT_LED_PIN, OUTPUT);
+  pinMode(BAD_TEMP_LED_PIN, OUTPUT);
+  digitalWrite(BAD_VOLT_LED_PIN, HIGH);
+  digitalWrite(BAD_TEMP_LED_PIN, HIGH);
 
-  voltRead = RESET;
-  tempVoltRead = RESET;
-  tempInF = RESET;
-  temp1InF = RESET;
-  temp2InF = RESET;
-  temp3InF = RESET;
-  modifySettler = RESET;
-  myData.temp = RESET;
-  myData.heatOnFlag = false;
+  firstPass = true;
   ESP_One_current_st = temp_reading_st;
 
   WiFi.mode(WIFI_STA);
@@ -127,7 +148,7 @@ void setup() {
   esp_now_register_send_cb(OnDataSent);
 
   esp_now_peer_info_t peerInfo;
-  memcpy(peerInfo.peer_addr, ESP_Two_address, PEER_ADDR_MEM_BYTES);
+  memcpy(peerInfo.peer_addr, ESPTwoAddress, PEER_ADDR_MEM_BYTES);
   peerInfo.channel = ESP_TWO_CHANNEL;  
   peerInfo.encrypt = false;
 
@@ -136,22 +157,17 @@ void setup() {
     return;
   }
 
-  delay(ONE_SECOND);
+  delay(FIVE_SECONDS);
 }
- 
+
+/*
+ * Loop state machine
+ */
 void loop() { 
   switch (ESP_One_current_st) {
   case temp_reading_st:
     Serial.println("temp_reading_st");
     tempRead();
-
-    if (analogRead(VOLT_READ_PIN) > VOLT_HIGH_BOUND || analogRead(VOLT_READ_PIN) < VOLT_LOW_BOUND) {
-      Serial.println("out of volt bounds");
-      digitalWrite(TRANSMIT_LED_PIN, LOW);
-      myData.heatOnFlag = false;
-      esp_now_send(ESP_Two_address, (uint8_t *) &myData, sizeof(myData));
-      ESP_One_current_st = bad_volt_st;
-    }
     
     // if below enable cutoff or above disable cutoff, move to transmit
     if ((!myData.heatOnFlag && tempInF <= HEAT_ENABLE_AT) || 
@@ -171,20 +187,22 @@ void loop() {
    case transmit_st:
     Serial.println("transmit_st");
     
-    esp_now_send(ESP_Two_address, (uint8_t *) &myData, sizeof(myData));
+    esp_now_send(ESPTwoAddress, (uint8_t *) &myData, sizeof(myData));
     ESP_One_current_st = temp_reading_st;
     
     break;  
    case bad_volt_st:
     Serial.println("bad_volt_st");
     tempRead();
-    Serial.println(voltRead);
+    Serial.println(analogRead(VOLT_READ_PIN));
     if (analogRead(VOLT_READ_PIN) < VOLT_HIGH_BOUND && analogRead(VOLT_READ_PIN) > VOLT_LOW_BOUND) {
-      digitalWrite(TRANSMIT_LED_PIN, HIGH);
+      digitalWrite(BAD_VOLT_LED_PIN, HIGH);
       ESP_One_current_st = temp_reading_st;
     }
     
     break; 
+   case bad_temp_st:
+    break;
    default:
     Serial.println("Default");
     break;
