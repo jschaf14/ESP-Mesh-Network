@@ -6,6 +6,8 @@
 #define TEMP3_READ_PIN 34
 #define VOLT_READ_PIN 35
 #define TRANSMIT_LED_PIN 2
+#define VOLT_HIGH_BOUND 2275
+#define VOLT_LOW_BOUND 2245
 #define MS_TO_SEC 1000
 #define ONE_SECOND (1 * MS_TO_SEC)
 #define FIVE_SECONDS (5 * MS_TO_SEC)
@@ -15,8 +17,9 @@
 #define PEER_ADDR_MEM_BYTES 6
 #define RESET 0
 #define C_TO_F 9 / 5 + 32
-#define TMP36_F_MODIFIER 1
+#define TMP36_F_MODIFIER -7
 #define E_D_SETTLER 3
+#define NUM_SENSORS_READ
 
 const uint8_t ESP_Two_address[] = {0x24, 0x6F, 0x28, 0xB2, 0xD6, 0x84};
 
@@ -26,7 +29,8 @@ static int tempInF = RESET;
 static int temp1InF = RESET;
 static int temp2InF = RESET;
 static int temp3InF = RESET;
-static int TempDiff = RESET;
+static int tempStack = RESET;
+static uint8_t tempNumRead = RESET;
 static uint8_t modifySettler = RESET;
 
 // Structure example to receive data
@@ -38,10 +42,53 @@ typedef struct struct_transmit_packet {
 
 struct_transmit_packet myData;
 
-enum ESP_One_st {temp_reading_st, transmit_st} ESP_One_current_st;
+enum ESP_One_st {temp_reading_st, transmit_st, bad_volt_st} ESP_One_current_st;
 
 static int volt_to_farenheit(int x) {
-  return ((x - 500) / 10) * C_TO_F - TMP36_F_MODIFIER;
+  return ((x - 500) / 10) * C_TO_F + TMP36_F_MODIFIER;
+}
+
+void tempRead() {
+  tempStack = RESET;
+  tempNumRead = RESET;
+  
+  // put your main code here, to run repeatedly:
+  temp1InF = volt_to_farenheit(analogRead(TEMP1_READ_PIN));
+  temp2InF = volt_to_farenheit(analogRead(TEMP2_READ_PIN));
+  temp3InF = volt_to_farenheit(analogRead(TEMP3_READ_PIN));
+
+  if (abs(temp1InF - (temp2InF + temp3InF) / 2) > 2) {
+    Serial.print(abs(temp1InF - (temp2InF + temp3InF / 2)));
+    Serial.print(" Temp1 ignored ");
+    Serial.println(temp1InF);
+  } else {
+    tempNumRead++;
+    tempStack += temp1InF;
+  }
+
+  if (abs(temp2InF - (tempStack + temp3InF) / (tempNumRead + 1)) > 2) {
+    Serial.print(abs(temp2InF - (tempStack + temp3InF) / (tempNumRead + 1)));
+    Serial.print("Temp2 ignored ");
+    Serial.println(temp2InF);
+  } else {
+    tempNumRead++;
+    tempStack += temp2InF;
+  }
+
+  if (abs(temp3InF - tempStack / tempNumRead) > 2) {
+    Serial.print(abs(temp3InF - tempStack / (tempNumRead + 1)));
+    Serial.print("Temp3 ignored ");
+    Serial.println(temp3InF);
+  } else {
+    tempNumRead++;
+    tempStack += temp3InF;
+  }
+  
+  tempInF = tempStack / tempNumRead;
+  myData.temp = tempInF;
+  
+  Serial.print("TEMP: ");
+  Serial.println(tempInF);
 }
 
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
@@ -57,7 +104,7 @@ void setup() {
   pinMode(TEMP2_READ_PIN, INPUT);
   pinMode(TEMP3_READ_PIN, INPUT);
   pinMode(TRANSMIT_LED_PIN, OUTPUT);
-  digitalWrite(TRANSMIT_LED_PIN, LOW);
+  digitalWrite(TRANSMIT_LED_PIN, HIGH);
 
   voltRead = RESET;
   tempVoltRead = RESET;
@@ -92,47 +139,20 @@ void setup() {
   delay(ONE_SECOND);
 }
  
-void loop() {
-  voltRead = analogRead(VOLT_READ_PIN);
-  Serial.print(voltRead);
-  
-  // put your main code here, to run repeatedly:
-  tempVoltRead = analogRead(TEMP1_READ_PIN);
-  temp1InF = volt_to_farenheit(tempVoltRead);
-  Serial.print("TEMP1: ");
-  Serial.println(temp1InF);
-
-  tempVoltRead = analogRead(TEMP2_READ_PIN);
-  temp2InF = volt_to_farenheit(tempVoltRead);
-  Serial.print("TEMP2: ");
-  Serial.println(temp2InF);
-
-  tempVoltRead = analogRead(TEMP3_READ_PIN);
-  temp3InF = volt_to_farenheit(tempVoltRead);
-  Serial.print("TEMP3: ");
-  Serial.println(temp3InF);
-
-  tempInF = (temp1InF + temp2InF + temp3InF) / 3;
-
-  Serial.print("TEMP: ");
-  Serial.println(tempInF);
-  if (myData.temp >= tempInF)
-    TempDiff = myData.temp - tempInF;
-  else
-    TempDiff = tempInF - myData.temp;
-
-  if (voltRead > 2275 || voltRead < 2245) {
-    Serial.println("out of bounds");
-    digitalWrite(TRANSMIT_LED_PIN, LOW);
-  }
-  else digitalWrite(TRANSMIT_LED_PIN, HIGH);
-  
-  myData.temp = tempInF;
-  //esp_now_send(ESP_Two_address, (uint8_t *) &myData, sizeof(myData));
-  
+void loop() { 
   switch (ESP_One_current_st) {
   case temp_reading_st:
-    Serial.println("temp_read_st");
+    Serial.println("temp_reading_st");
+    tempRead();
+
+    if (analogRead(VOLT_READ_PIN) > VOLT_HIGH_BOUND || analogRead(VOLT_READ_PIN) < VOLT_LOW_BOUND) {
+      Serial.println("out of volt bounds");
+      digitalWrite(TRANSMIT_LED_PIN, LOW);
+      myData.heatOnFlag = false;
+      esp_now_send(ESP_Two_address, (uint8_t *) &myData, sizeof(myData));
+      ESP_One_current_st = bad_volt_st;
+    }
+    
     // if below enable cutoff or above disable cutoff, move to transmit
     if ((!myData.heatOnFlag && tempInF <= HEAT_ENABLE_AT) || 
           (myData.heatOnFlag && tempInF >= HEAT_DISABLE_AT)) {
@@ -143,17 +163,28 @@ void loop() {
         ESP_One_current_st = transmit_st; //change state to transmit
         modifySettler = RESET;
       }
-    }
-    else {
+    } else {
       modifySettler = RESET;
     }
+    
     break;
    case transmit_st:
-    Serial.println("Transmitting");
+    Serial.println("transmit_st");
     
     esp_now_send(ESP_Two_address, (uint8_t *) &myData, sizeof(myData));
     ESP_One_current_st = temp_reading_st;
-    break;
+    
+    break;  
+   case bad_volt_st:
+    Serial.println("bad_volt_st");
+    tempRead();
+    Serial.println(voltRead);
+    if (analogRead(VOLT_READ_PIN) < VOLT_HIGH_BOUND && analogRead(VOLT_READ_PIN) > VOLT_LOW_BOUND) {
+      digitalWrite(TRANSMIT_LED_PIN, HIGH);
+      ESP_One_current_st = temp_reading_st;
+    }
+    
+    break; 
    default:
     Serial.println("Default");
     break;

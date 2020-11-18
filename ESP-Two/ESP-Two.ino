@@ -34,6 +34,7 @@ void setup() {
   // Initialize Serial Monitor
   Serial.begin(115200);
   pinMode(2, OUTPUT);
+  digitalWrite(2, HIGH);
   
   // Set device as a Wi-Fi Station
   WiFi.mode(WIFI_STA);
