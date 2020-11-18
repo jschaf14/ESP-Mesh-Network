@@ -17,7 +17,14 @@ const uint8_t ESP_Two_address[] = {0x24, 0x6F, 0x28, 0xB2, 0xD6, 0x84};
 static uint32_t tempVoltRead = RESET;
 static uint32_t tempInCelsius = RESET;
 static uint32_t swapper = RESET;
-static bool heatOnFlag = false;
+
+// Structure example to receive data
+// Must match the sender structure
+typedef struct struct_transmit_packet {
+    bool heatOnFlag;
+} struct_transmit_packet;
+
+struct_transmit_packet myData;
 
 enum ESP_One_st {temp_reading_st, transmit_st} ESP_One_current_st;
 
@@ -49,7 +56,7 @@ void setup() {
   esp_now_peer_info_t peerInfo;
   memcpy(peerInfo.peer_addr, ESP_Two_address, PEER_ADDR_MEM_BYTES);
   peerInfo.channel = ESP_TWO_CHANNEL;  
-  peerInfo.encrypt = true;
+  peerInfo.encrypt = false;
 
   if (esp_now_add_peer(&peerInfo) != ESP_OK) {
     Serial.println("Failed to add peer");
@@ -63,8 +70,8 @@ void loop() {
   tempInCelsius = volt_to_celsius(tempVoltRead);
   if (swapper >= 3) {
     swapper = RESET;
-    heatOnFlag = !heatOnFlag;
-    esp_err_t result = esp_now_send(ESP_Two_address, (uint8_t *) &heatOnFlag, sizeof(heatOnFlag));
+    myData.heatOnFlag = !myData.heatOnFlag;
+    esp_err_t result = esp_now_send(ESP_Two_address, (uint8_t *) &myData, sizeof(myData));
     if (result == ESP_OK) {
       Serial.println("Sent with success");
     }
@@ -72,22 +79,23 @@ void loop() {
       Serial.println("Error sending the data");
     }
     Serial.print("Transmitting LOOP ");
-    Serial.println(heatOnFlag);
+    Serial.println(myData.heatOnFlag);
   }
   swapper++;
   
   switch (ESP_One_current_st) {
   case temp_reading_st:
     // if below enable cutoff or above disable cutoff, move to transmit
-    if ((!heatOnFlag && tempInCelsius <= HEAT_ENABLE_AT) || 
-          (heatOnFlag && tempInCelsius >= HEAT_DISABLE_AT)) {
-      heatOnFlag = (tempInCelsius <= HEAT_ENABLE_AT); //set flag to true or false based on tempature.
+    if ((!myData.heatOnFlag && tempInCelsius <= HEAT_ENABLE_AT) || 
+          (myData.heatOnFlag && tempInCelsius >= HEAT_DISABLE_AT)) {
+      myData.heatOnFlag = (tempInCelsius <= HEAT_ENABLE_AT); //set flag to true or false based on tempature.
       ESP_One_current_st = transmit_st; //change state to transmit
     }
     break;
    case transmit_st:
     Serial.println("Transmitting");
-    esp_now_send(ESP_Two_address, (uint8_t *) heatOnFlag, sizeof(heatOnFlag));
+    digitalWrite(TRANSMIT_LED_PIN, myData.heatOnFlag);
+    esp_now_send(ESP_Two_address, (uint8_t *) &myData, sizeof(myData));
     ESP_One_current_st = temp_reading_st;
     break;
   }

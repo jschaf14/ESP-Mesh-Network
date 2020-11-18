@@ -14,27 +14,25 @@
 
 // Structure example to receive data
 // Must match the sender structure
-typedef struct struct_message {
-    char a[32];
-    int b;
-    float c;
-    String d;
-    bool e;
-} struct_message;
+typedef struct struct_transmit_packet {
+    bool heatOnFlag;
+} struct_transmit_packet;
 
-// Create a struct_message called myData
-static bool heatOnFlag = false;
+struct_transmit_packet myData;
 
 // callback function that will be executed when data is received
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
-  memcpy(heatOnFlag, incomingData, sizeof(heatOnFlag));
+  memcpy(&myData, incomingData, sizeof(myData));
   Serial.println("recieved");
-  Serial.println(heatOnFlag);
+  Serial.println(myData.heatOnFlag);
+  if (myData.heatOnFlag) digitalWrite(2, HIGH);
+  else digitalWrite(2, LOW);
 }
  
 void setup() {
   // Initialize Serial Monitor
   Serial.begin(115200);
+  pinMode(2, OUTPUT);
   
   // Set device as a Wi-Fi Station
   WiFi.mode(WIFI_STA);
