@@ -25,8 +25,7 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   memcpy(&myData, incomingData, sizeof(myData));
   Serial.println("recieved");
   Serial.println(myData.heatOnFlag);
-  if (myData.heatOnFlag) digitalWrite(2, HIGH);
-  else digitalWrite(2, LOW);
+  digitalWrite(2, myData.heatOnFlag);
 }
  
 void setup() {
