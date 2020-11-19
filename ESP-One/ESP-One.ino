@@ -7,8 +7,8 @@
 #define VOLT_READ_PIN 35
 #define BAD_VOLT_LED_PIN 15
 #define BAD_TEMP_LED_PIN 2
-#define VOLT_HIGH_BOUND 2275
-#define VOLT_LOW_BOUND 2245
+#define VOLT_HIGH_BOUND 1895
+#define VOLT_LOW_BOUND 1865
 #define MS_TO_SEC 1000
 #define ONE_SECOND (1 * MS_TO_SEC)
 #define FIVE_SECONDS (5 * MS_TO_SEC)
@@ -18,7 +18,7 @@
 #define PEER_ADDR_MEM_BYTES 6
 #define RESET 0
 #define C_TO_F 9 / 5 + 32
-#define TMP36_F_MODIFIER -7
+#define TMP36_F_MODIFIER -8
 #define E_D_SETTLER 3
 #define NUM_SENSORS_READ
 
@@ -62,7 +62,7 @@ void tempRead() {
   temp3InF = volt_to_farenheit(analogRead(TEMP3_READ_PIN));
 
   if (abs(temp1InF - (temp2InF + temp3InF) / 2) > 2) {
-    Serial.print(abs(temp1InF - (temp2InF + temp3InF / 2)));
+    Serial.print(abs(temp1InF - (temp2InF + temp3InF) / 2));
     Serial.print(" Temp1 ignored ");
     Serial.println(temp1InF);
   } else {
@@ -72,7 +72,7 @@ void tempRead() {
 
   if (abs(temp2InF - (tempStack + temp3InF) / (tempNumRead + 1)) > 2) {
     Serial.print(abs(temp2InF - (tempStack + temp3InF) / (tempNumRead + 1)));
-    Serial.print("Temp2 ignored ");
+    Serial.print(" Temp2 ignored ");
     Serial.println(temp2InF);
   } else {
     tempNumRead++;
@@ -91,6 +91,7 @@ void tempRead() {
   tempInF = tempStack / tempNumRead;
   if (analogRead(VOLT_READ_PIN) > VOLT_HIGH_BOUND || analogRead(VOLT_READ_PIN) < VOLT_LOW_BOUND) {
     Serial.println("out of volt bounds");
+    Serial.println(analogRead(VOLT_READ_PIN));
     digitalWrite(BAD_VOLT_LED_PIN, LOW);
     myData.heatOnFlag = false;
     esp_now_send(ESPTwoAddress, (uint8_t *) &myData, sizeof(myData));
@@ -194,7 +195,6 @@ void loop() {
    case bad_volt_st:
     Serial.println("bad_volt_st");
     tempRead();
-    Serial.println(analogRead(VOLT_READ_PIN));
     if (analogRead(VOLT_READ_PIN) < VOLT_HIGH_BOUND && analogRead(VOLT_READ_PIN) > VOLT_LOW_BOUND) {
       digitalWrite(BAD_VOLT_LED_PIN, HIGH);
       ESP_One_current_st = temp_reading_st;
